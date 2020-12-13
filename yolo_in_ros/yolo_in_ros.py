@@ -39,9 +39,12 @@ class YoloInRos(Node):
         self.asyncN = 0
 
         #ROS attributes
-        self.publisher_raw = self.create_publisher(Image, "camera/image", 10)
-        self.publisher_output = self.create_publisher(Image, "camera/yolo", 10)
-        self.publisher_info = self.create_publisher(CameraInfo, "camera/camera_info", 10)
+        #self.publisher_raw = self.create_publisher(Image, "camera/image", 10)
+        self.publisher_output = self.create_publisher(Image, "camera/yolo", 1)
+        self.publisher_info = self.create_publisher(CameraInfo, "camera/camera_info", 1)
+        self.subscriber_camera = self.create_subscription(Image, "camera/image", self.get_frame, 1)
+        self.frame = Image
+        self.frame_nanosec = 0
         self.bridge = CvBridge()
 
     class QueueFPS(queue.Queue):
@@ -59,12 +62,14 @@ class YoloInRos(Node):
         def getFPS(self):
             return self.counter / (time.time() - self.startTime)
 
+    def get_frame(self, msg):
+        self.frame = msg
     def cam_info(self):
         data1 = [679.0077123045467, 0.0, 356.3515350783442, 0.0, 672.9969017826554, 196.5430429125135, 0.0, 0.0, 1.0]
         data2 = [0.260086, -0.025048, 0.089063, 0.138628, 0.000000]
         data3 = [1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000]
         data4 = [852.395142, 0.000000, 565.897630, 0.000000, 0.000000, 922.066223, 386.586250, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000]
-        people = {'image_width': 640,
+        d = {'image_width': 640,
           'image_height': 480,
           'camera_name': "camera",
           "camera_matrix": {'rows': 3, 'cols': 3, 'data': data1},
@@ -74,14 +79,14 @@ class YoloInRos(Node):
           "projection_matrix": {'rows': 3, 'cols': 4, 'data': data4}}
 
         msg = CameraInfo()
-        msg.header.frame_id = people["camera_name"]
-        msg.height = people["image_height"]
-        msg.width = people["image_width"]
-        msg.distortion_model = people["distortion_model"]
-        msg.d = people["distortion_coefficients"]["data"]
-        msg.k = people["camera_matrix"]["data"]
-        msg.r = people["rectification_matrix"]["data"]
-        msg.p = people["projection_matrix"]["data"]
+        msg.header.frame_id = d["camera_name"]
+        msg.height = d["image_height"]
+        msg.width = d["image_width"]
+        msg.distortion_model = d["distortion_model"]
+        msg.d = d["distortion_coefficients"]["data"]
+        msg.k = d["camera_matrix"]["data"]
+        msg.r = d["rectification_matrix"]["data"]
+        msg.p = d["projection_matrix"]["data"]
         self.publisher_info.publish(msg)
 
     def marker_info(self):
@@ -164,7 +169,7 @@ class YoloInRos(Node):
 
         winName = 'Deep learning object detection in OpenCV'
         cv.namedWindow(winName, cv.WINDOW_NORMAL)
-        cap = cv.VideoCapture(input_source)
+        #cap = cv.VideoCapture(input_source)
 
         global framesQueue, process
         process = True
@@ -172,14 +177,20 @@ class YoloInRos(Node):
         def framesThreadBody():
             # global framesQueue, process
             while process:
-                hasFrame, frame = cap.read()
-                if not hasFrame:
+                if self.frame.header.stamp.nanosec == self.frame_nanosec:
                     break
-                framesQueue.put(frame)
-                msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-                msg.header.frame_id = "camera"
-                self.publisher_raw.publish(msg)
-                self.cam_info()
+                else:
+                    self.frame_nanosec = self.frame.header.stamp.nanosec
+                    frame = self.bridge.imgmsg_to_cv2(self.frame, "bgr8")
+                    framesQueue.put(frame)
+                # hasFrame, frame = cap.read()
+                # if not hasFrame:
+                #     break
+                # framesQueue.put(frame)
+                # msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
+                # msg.header.frame_id = "camera"
+                # self.publisher_raw.publish(msg)
+                # self.cam_info()
                 
 
 
