@@ -16,6 +16,7 @@ setup(
         (os.path.join('lib', 'python3.6', 'site-packages', package_name), glob('yolo_in_ros/*.txt')),
         (os.path.join('lib', 'python3.6', 'site-packages', package_name), glob('yolo_in_ros/*.cfg')),
         (os.path.join('lib', 'python3.6', 'site-packages', package_name), glob('yolo_in_ros/*.weights')),
+        (os.path.join('share', package_name), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
