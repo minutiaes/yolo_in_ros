@@ -8,10 +8,10 @@ import numpy as np
 
 import rclpy
 from sensor_msgs.msg import Image
-from sensor_msgs.msg import CameraInfo
 from rclpy.node import Node
-from cv_bridge import CvBridge, CvBridgeError
+from cv_bridge import CvBridge
 from visualization_msgs.msg import Marker
+from rclpy.duration import Duration
 
 class YoloInRos(Node):
     classes = []
@@ -36,23 +36,22 @@ class YoloInRos(Node):
         self.scale = scale
         self.color = color
         self.mean = mean
-        self.asyncN = 0
 
         #ROS attributes
-        #self.publisher_raw = self.create_publisher(Image, "camera/image", 10)
         self.publisher_output = self.create_publisher(Image, "camera/yolo", 1)
-        self.publisher_info = self.create_publisher(CameraInfo, "camera/camera_info", 1)
+        self.publisher_marker = self.create_publisher(Marker, "camera/marker", 1)
         self.subscriber_camera = self.create_subscription(Image, "camera/image", self.get_frame, 1)
         self.frame = Image
-        self.frame_nanosec = 0
         self.bridge = CvBridge()
+
+        self.framesQueue_ = self.QueueFPS()
+        self.predictionsQueue_ = self.QueueFPS()
 
     class QueueFPS(queue.Queue):
         def __init__(self):
-            queue.Queue.__init__(self)
+            queue.Queue.__init__(self, maxsize=1)
             self.startTime = 0
             self.counter = 0
-
         def put(self, v):
             queue.Queue.put(self, v)
             self.counter += 1
@@ -63,35 +62,36 @@ class YoloInRos(Node):
             return self.counter / (time.time() - self.startTime)
 
     def get_frame(self, msg):
-        self.frame = msg
-    def cam_info(self):
-        data1 = [679.0077123045467, 0.0, 356.3515350783442, 0.0, 672.9969017826554, 196.5430429125135, 0.0, 0.0, 1.0]
-        data2 = [0.260086, -0.025048, 0.089063, 0.138628, 0.000000]
-        data3 = [1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000]
-        data4 = [852.395142, 0.000000, 565.897630, 0.000000, 0.000000, 922.066223, 386.586250, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000]
-        d = {'image_width': 640,
-          'image_height': 480,
-          'camera_name': "camera",
-          "camera_matrix": {'rows': 3, 'cols': 3, 'data': data1},
-          "distortion_model": "plumb_bob",
-          "distortion_coefficients": {'rows': 1, 'cols': 5, 'data': data2},
-          "rectification_matrix": {'rows': 3, 'cols': 3, 'data': data3},
-          "projection_matrix": {'rows': 3, 'cols': 4, 'data': data4}}
+        frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+        self.framesQueue_.put(frame)
 
-        msg = CameraInfo()
-        msg.header.frame_id = d["camera_name"]
-        msg.height = d["image_height"]
-        msg.width = d["image_width"]
-        msg.distortion_model = d["distortion_model"]
-        msg.d = d["distortion_coefficients"]["data"]
-        msg.k = d["camera_matrix"]["data"]
-        msg.r = d["rectification_matrix"]["data"]
-        msg.p = d["projection_matrix"]["data"]
-        self.publisher_info.publish(msg)
-
-    def marker_info(self):
+    def generate_marker(self, class_id, confidence, left, top, width, height): #(classIds[i], confidences[i], left, top, width, height)
         msg = Marker()
+        center = [left+width/2, top+height/2]
 
+        msg.header.frame_id = "yolo_marker"
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.ns = YoloInRos.classes[class_id]
+        msg.id = 0
+        msg.type = 1 #rectangle
+        msg.action = 0 #modify
+        msg.pose.position.x = center[0]/640
+        msg.pose.position.y = center[1]/480
+        msg.pose.position.z = 1.0
+        msg.pose.orientation.x = 0.0
+        msg.pose.orientation.y = 0.0
+        msg.pose.orientation.z = 0.0
+        msg.pose.orientation.w = 1.0
+        msg.scale.x = 0.1
+        msg.scale.y = 0.1
+        msg.scale.z = 0.1
+        msg.color.a = confidence
+        msg.color.r = 0.0
+        msg.color.g = 1.0
+        msg.color.b = 0.0
+        msg.lifetime = Duration(nanoseconds=int(1000000/self.predictionsQueue_.getFPS())).to_msg()
+
+        self.publisher_marker.publish(msg)
 
     def load_classes(self):
         if self.classes:
@@ -164,41 +164,20 @@ class YoloInRos(Node):
             width = box[2]
             height = box[3]
             draw_prediction(classIds[i], confidences[i], left, top, left + width, top + height)
+            self.generate_marker(classIds[i], confidences[i], left, top, width, height)
+            print("classId: {} \n confidence: {} \n left: {}\n top: {}\n width: {}\n height: {}"
+                  .format(classIds[i], confidences[i], left, top, width, height))
 
-    def start_detection(self, input_source):
+    def start_detection(self):
 
-        winName = 'Deep learning object detection in OpenCV'
-        cv.namedWindow(winName, cv.WINDOW_NORMAL)
-        #cap = cv.VideoCapture(input_source)
-
-        global framesQueue, process
+        global process
         process = True
-        framesQueue = self.QueueFPS()
-        def framesThreadBody():
-            # global framesQueue, process
-            while process:
-                if self.frame.header.stamp.nanosec == self.frame_nanosec:
-                    break
-                else:
-                    self.frame_nanosec = self.frame.header.stamp.nanosec
-                    frame = self.bridge.imgmsg_to_cv2(self.frame, "bgr8")
-                    framesQueue.put(frame)
-                # hasFrame, frame = cap.read()
-                # if not hasFrame:
-                #     break
-                # framesQueue.put(frame)
-                # msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-                # msg.header.frame_id = "camera"
-                # self.publisher_raw.publish(msg)
-                # self.cam_info()
-                
 
-
-        global processedFramesQueue, predictionsQueue
+        global processedFramesQueue
         processedFramesQueue = queue.Queue()
         predictionsQueue = self.QueueFPS()
 
-        def processingThreadBody():
+        def processing_thread_body():
             # global processedFramesQueue, predictionsQueue, process
 
             futureOutputs = []
@@ -208,12 +187,8 @@ class YoloInRos(Node):
                 frame = None
 
                 try:
-                    frame = framesQueue.get_nowait()
-                    if self.asyncN:
-                        if len(futureOutputs) == self.asyncN:
-                            frame = None  # Skip the frame
-                    else:
-                        framesQueue.queue.clear()  # Skip the rest of frames
+                    frame = self.framesQueue_.get_nowait()
+                    self.framesQueue_.queue.clear()  # Skip the rest of frames
                 except queue.Empty:
 
                     pass
@@ -233,74 +208,42 @@ class YoloInRos(Node):
                         frame = cv.resize(frame, (inpWidth, inpHeight))
                         YoloInRos.net.setInput(np.array([[inpHeight, inpWidth, 1.6]], dtype=np.float32), 'im_info')
 
-                    if self.asyncN:
-                        futureOutputs.append(YoloInRos.net.forwardAsync())
-                    else:
-                        outs = YoloInRos.net.forward(outNames)
-                        predictionsQueue.put(np.copy(outs))
+                    outs = YoloInRos.net.forward(outNames)
+                    self.predictionsQueue_.put(np.copy(outs))
 
                 while futureOutputs and futureOutputs[0].wait_for(0):
                     out = futureOutputs[0].get()
-                    predictionsQueue.put(np.copy([out]))
+                    self.predictionsQueue_.put(np.copy([out]))
 
                     del futureOutputs[0]
 
-        framesThread = Thread(target=framesThreadBody)
-        framesThread.start()
-        time.sleep(1)
-        processingThread = Thread(target=processingThreadBody)
-        processingThread.start()
+                try:
+                    outs = self.predictionsQueue_.get_nowait()
+                    frame = processedFramesQueue.get_nowait()
+                    self.post_process(frame, outs)
 
-        #
-        # Postprocessing and rendering loop
-        #
-        while cv.waitKey(1) < 0:
-            try:
-                # Request prediction first because they put after frames
-                outs = predictionsQueue.get_nowait()
-                frame = processedFramesQueue.get_nowait()
-
-                self.post_process(frame, outs)
-
-                # Put efficiency information.
-                if predictionsQueue.counter > 1:
-                    label = 'Camera: %.2f FPS' % (framesQueue.getFPS())
-                    cv.putText(frame, label, (0, 15), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-
-                    label = 'Network: %.2f FPS' % (predictionsQueue.getFPS())
-                    cv.putText(frame, label, (0, 30), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-
-                    label = 'Skipped frames: %d' % (framesQueue.counter - predictionsQueue.counter)
-                    cv.putText(frame, label, (0, 45), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-
-                cv.imshow(winName, frame)
-                msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
-                msg.header.frame_id = "camera"
-                self.publisher_output.publish(msg)
-            except queue.Empty:
-                pass
-
-        process = False
-        framesThread.join()
-        processingThread.join()
+                    msg = self.bridge.cv2_to_imgmsg(frame, "bgr8")
+                    msg.header.frame_id = "camera"
+                    self.publisher_output.publish(msg)
+                    print("Network: {}, Camera: {}".format(self.predictionsQueue_.getFPS(), self.framesQueue_.getFPS()))
+                except queue.Empty:
+                    pass
 
 
-# if __name__ == "__main__":
-#     obj_det = yolo(config="yolov4-tiny.cfg", model="yolov4-tiny.weights", classes="object_detection_classes_yolov3.txt",
-#                    conf_threshold=0.1)
-#     obj_det.load_classes()
-#     obj_det.load_network()
-#     obj_det.start_detection(0)
+        processing_thread = Thread(target=processing_thread_body)
+        processing_thread.start()
+
+        """process = False
+        processing_thread.join()"""
 
 def main():
     rclpy.init()
 
     obj_det = YoloInRos(config="yolov4-tiny.cfg", model="yolov4-tiny.weights", classes="object_detection_classes_yolov3.txt",
                    conf_threshold=0.1)
-    #image_output = ImageOutput()
     obj_det.load_classes()
     obj_det.load_network()
-    obj_det.start_detection(0)
+    obj_det.start_detection()
     try:
         rclpy.spin(obj_det)
     except KeyboardInterrupt:
