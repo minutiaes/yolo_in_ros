@@ -72,32 +72,35 @@ class YoloInRos(Node):
         self.framesQueue_.put(frame)
 
     def generate_marker(self, class_id, confidence, left, top, width, height):
-        msg = Marker()
-        center = [left+width/2, top+height/2]
+        if class_id == 0:
+            msg = Marker()
+            center = [left+width/2, top+height/2]
 
-        msg.header.frame_id = "yolo_marker"
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.ns = YoloInRos.classes[class_id]
-        msg.id = 0
-        msg.type = 1  # rectangle
-        msg.action = 0  # modify
-        msg.pose.position.x = center[0]/640
-        msg.pose.position.y = center[1]/480
-        msg.pose.position.z = 1.0
-        msg.pose.orientation.x = 0.0
-        msg.pose.orientation.y = 0.0
-        msg.pose.orientation.z = 0.0
-        msg.pose.orientation.w = 1.0
-        msg.scale.x = 0.1
-        msg.scale.y = 0.1
-        msg.scale.z = 0.1
-        msg.color.a = confidence
-        msg.color.r = 0.0
-        msg.color.g = 1.0
-        msg.color.b = 0.0
-        msg.lifetime = Duration(nanoseconds=int(1000000/self.predictionsQueue_.getFPS())).to_msg()
+            msg.header.frame_id = "yolo_marker"
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.ns = YoloInRos.classes[class_id]
+            msg.id = 0
+            msg.type = 1  # rectangle
+            msg.action = 0  # modify
+            msg.pose.position.x = (center[0]/640) - 0.5
+            msg.pose.position.y = 0.0
+            msg.pose.position.z = -(center[1]/480) + 0.5
+            msg.pose.orientation.x = 0.0
+            msg.pose.orientation.y = 0.0
+            msg.pose.orientation.z = 0.0
+            msg.pose.orientation.w = 1.0
+            msg.scale.x = 0.1
+            msg.scale.y = 0.1
+            msg.scale.z = 0.1
+            msg.color.a = confidence
+            msg.color.r = 0.0
+            msg.color.g = 1.0
+            msg.color.b = 0.0
+            msg.lifetime = Duration(nanoseconds=int(1000000/self.predictionsQueue_.getFPS())).to_msg()
 
-        self.publisher_marker.publish(msg)
+            self.publisher_marker.publish(msg)
+        else:
+            pass
 
     def load_classes(self):
         if self.classes:
