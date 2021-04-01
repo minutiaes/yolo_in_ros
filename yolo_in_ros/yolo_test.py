@@ -30,6 +30,7 @@ class yolo:
         self.asyncN = 0
 
         self.freym_ = 1
+        self.frame_raw = 0
         self.fremy_new = False
     
     class QueueFPS(queue.Queue):
@@ -123,6 +124,7 @@ class yolo:
 
         winName = 'Deep learning object detection in OpenCV'
         cv.namedWindow(winName, cv.WINDOW_NORMAL)
+        cv.namedWindow("Input", cv.WINDOW_NORMAL)
         if input_source >= 0:
             cap = cv.VideoCapture(input_source)
         else:
@@ -142,12 +144,12 @@ class yolo:
                         
                         break
                     framesQueue.put(frame)
+                    self.frame_raw = frame
             else:
                 while process:
                     if not self.fremy_new:
                         pass
                     elif self.fremy_new:
-                        print("nolü")
                         frame = self.freym_
                         hasFrame = True
                         self.fremy_new = False
@@ -173,6 +175,7 @@ class yolo:
                             frame = None  # Skip the frame
                     else:
                         framesQueue.queue.clear()  # Skip the rest of frames
+
                 except queue.Empty:
 
                     pass
@@ -180,6 +183,7 @@ class yolo:
                 if not frame is None:
                     frameHeight = frame.shape[0]
                     frameWidth = frame.shape[1]
+                    
                     # Create a 4D blob from a frame.
                     inpWidth = self.width if self.width else frameWidth
                     inpHeight = self.height if self.height else frameHeight
@@ -203,6 +207,7 @@ class yolo:
                     predictionsQueue.put(np.copy([out]))
 
                     del futureOutputs[0]
+
         framesThread = Thread(target=framesThreadBody)
         framesThread.start()
         time.sleep(1)
@@ -224,7 +229,7 @@ class yolo:
                 if predictionsQueue.counter > 1:
                     label = 'Camera: %.2f FPS' % (framesQueue.getFPS())
                     cv.putText(frame, label, (0, 15), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-                    print(framesQueue.getFPS())
+
                     label = 'Network: %.2f FPS' % (predictionsQueue.getFPS())
                     cv.putText(frame, label, (0, 30), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
 
@@ -232,6 +237,7 @@ class yolo:
                     cv.putText(frame, label, (0, 45), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
 
                 cv.imshow(winName, frame)
+                cv.imshow("Input",self.frame_raw)
 
             except queue.Empty:
                 pass
